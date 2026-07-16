@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log Dashboard</title>
+  <!-- Apply the saved theme BEFORE first paint to avoid a flash of the wrong theme. -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('ld-theme');
+        if (t !== 'light' && t !== 'dark') {
+          t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+        }
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
+    })();
+  </script>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">Log Dashboard</div>
+    <div class="controls">
+      <label>Account
+        <select id="account-select" disabled><option value="">Loading…</option></select>
+      </label>
+      <label>Severity
+        <select id="severity-filter">
+          <option value="">All</option>
+          <option value="critical">critical</option>
+          <option value="error">error</option>
+          <option value="warning">warning</option>
+          <option value="info">info</option>
+        </select>
+      </label>
+      <label>Search (streaming scan)
+        <input id="search-input" type="search" placeholder="text…">
+      </label>
+      <label class="live"><input id="live-toggle" type="checkbox"> Live</label>
+      <button id="clear-btn" title="Clear the entries shown on screen — does NOT modify or delete the log file">Clear</button>
+      <button id="refresh-btn" title="Force re-discovery of accounts &amp; logs">⟳ Refresh</button>
+      <button id="notify-btn" title="Email notification settings for the selected account">🔔 Notify</button>
+    </div>
+    <button id="theme-toggle" type="button" title="Toggle light/dark theme" aria-label="Toggle light/dark theme">🌙</button>
+  </header>
+
+  <main id="layout">
+    <!-- LEFT: accounts (kept lightweight; uses the account-select too).
+         The task specifies a three-panel layout, so we render a dedicated
+         accounts pane + logs pane + viewer pane. -->
+    <section id="accounts-panel" class="pane">
+      <h2>Accounts</h2>
+      <ul id="accounts-list" class="selectlist"></ul>
+    </section>
+
+    <!-- MIDDLE: discovered logs -->
+    <section id="logs-panel" class="pane">
+      <h2>Log files</h2>
+      <input id="logs-filter" type="search" placeholder="filter files…" autocomplete="off" spellcheck="false">
+      <ul id="logs-list" class="selectlist"></ul>
+      <div id="logs-status" class="muted"></div>
+    </section>
+
+    <!-- RIGHT: virtualized viewer -->
+    <section id="viewer-panel" class="pane">
+      <div id="viewer-meta" class="muted"></div>
+      <div id="viewer-wrap">
+        <div id="spacer-top"></div>
+        <div id="log-lines"></div>
+        <div id="spacer-bottom"></div>
+        <div id="viewer-empty" hidden>
+          <div class="ve-icon">⌀</div>
+          <div class="ve-title">No matching entries</div>
+          <div class="ve-sub"></div>
+        </div>
+      </div>
+      <div id="quickbar" class="muted"></div>
+    </section>
+  </main>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <!-- Per-account email notification settings. Severities and receivers are two
+       independent lists: every ticked severity is sent to every ticked receiver. -->
+  <div id="notify-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card notify-card" role="dialog" aria-modal="true" aria-labelledby="notify-title">
+      <header class="modal-head">
+        <div class="head-icon" aria-hidden="true">🔔</div>
+        <div class="head-text">
+          <h2 id="notify-title">Email notifications</h2>
+          <div class="head-meta">
+            <span id="notify-account" class="account-chip"></span>
+            <span id="notify-mode" class="mode-pill" hidden></span>
+          </div>
+        </div>
+        <button id="notify-close" class="icon-btn" data-close type="button" aria-label="Close">✕</button>
+      </header>
+
+      <div class="modal-body">
+        <div id="notify-banner" class="banner" hidden></div>
+
+        <label class="switch-row">
+          <input type="checkbox" id="notify-enabled">
+          <span class="switch-text">
+            <span class="switch-title">Send notifications for this account</span>
+            <span class="switch-sub">Master switch. While off, nothing is watched and no email leaves the server.</span>
+          </span>
+        </label>
+
+        <div class="notify-grid">
+          <div class="notify-col">
+            <section class="card">
+              <div class="card-head">
+                <h3>Log types</h3>
+                <span class="hint">what to report</span>
+              </div>
+              <div id="notify-severities" class="checklist sev-list"></div>
+            </section>
+            <section class="card">
+              <div class="card-head">
+                <h3>Receivers</h3>
+                <span class="hint">who gets it</span>
+              </div>
+              <div id="notify-recipients" class="checklist"></div>
+            </section>
+          </div>
+
+          <section class="card files-section">
+            <div class="card-head">
+              <h3>Log files to watch</h3>
+              <span id="notify-files-count" class="count-pill"></span>
+            </div>
+            <div class="files-tools">
+              <span class="search-wrap">
+                <svg class="search-ico" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M11.74 10.34a5.5 5.5 0 1 0-1.4 1.4l2.96 2.96a1 1 0 0 0 1.42-1.42l-2.97-2.94ZM7 10.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/></svg>
+                <input id="notify-files-filter" type="search" placeholder="filter files…" autocomplete="off" spellcheck="false" aria-label="Filter log files">
+              </span>
+              <span class="seg">
+                <button id="notify-files-all" type="button" class="link-btn">All</button>
+                <button id="notify-files-none" type="button" class="link-btn">None</button>
+              </span>
+            </div>
+            <div id="notify-files" class="checklist scrollbox"></div>
+          </section>
+        </div>
+
+        <div id="notify-summary" class="summary"></div>
+      </div>
+
+      <footer class="modal-foot">
+        <div id="notify-status" class="muted"></div>
+        <div class="foot-actions">
+          <button id="notify-preview-btn" type="button" title="Show the digest that would be sent right now — does not send anything">Preview digest</button>
+          <button id="notify-test-btn" type="button" title="Send a one-off test email to the selected receivers">Send test email</button>
+          <button id="notify-save" type="button" class="primary">Save</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Read-only render of the composed digest. Sandboxed: the email HTML is
+       built from log content, so it is never injected into this document. -->
+  <div id="preview-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card preview-card" role="dialog" aria-modal="true" aria-labelledby="preview-title">
+      <header class="modal-head">
+        <div class="head-icon" aria-hidden="true">📬</div>
+        <div class="head-text">
+          <h2 id="preview-title">Digest preview</h2>
+          <div id="preview-sub" class="muted"></div>
+        </div>
+        <button class="icon-btn" data-close type="button" aria-label="Close">✕</button>
+      </header>
+      <div class="modal-body preview-body">
+        <iframe id="preview-frame" sandbox="" title="Email preview"></iframe>
+      </div>
+      <footer class="modal-foot">
+        <div class="muted">Nothing has been sent — this is a local render.</div>
+        <div class="foot-actions"><button type="button" data-close class="primary">Close</button></div>
+      </footer>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
