@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Secrets and local environment (never commit — contains the auth password and
+# Brevo API key). Use .env.example as the template.
+.env
+.env.*
+!.env.example
+
+# Runtime state: per-account notification settings, written at runtime and
+# holding real account names. Not source.
+data/
+
+# Logs and OS cruft
+*.log
+.DS_Store
