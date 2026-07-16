@@ -1,0 +1,55 @@
+[Unit]
+Description=Log Dashboard (read-only WHM/cPanel Apache log viewer)
+After=network.target
+Documentation=file:///root/log-dashboard/README.md
+
+[Service]
+Type=simple
+WorkingDirectory=/root/log-dashboard
+# Load credentials/config from /root/log-dashboard/.env
+EnvironmentFile=/root/log-dashboard/.env
+ExecStart=/usr/bin/node /root/log-dashboard/server.js
+
+# Hardening — this service reads /home/* (read-only intent). Run as root only
+# because cPanel account log files are typically owner-readable by root;
+# do NOT grant capabilities beyond what node needs.
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=8
+
+# Sandboxing
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# The ONLY writable path in the whole unit: per-account notification settings
+# (data/notifications.json). ReadWritePaths= overrides both ProtectSystem=strict
+# and ProtectHome=read-only for this one directory. Log files themselves remain
+# strictly read-only — nothing here can modify /home.
+ReadWritePaths=/root/log-dashboard/data
+# /home is required read-only for log discovery; AllowHomeReadOnly is implied by
+# ProtectHome=read-only. We never write there.
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+# cPanel account homes are typically mode 711 (drwx--x--x). Without
+# CAP_DAC_READ_SEARCH, even root cannot readdir() them (no read bit for
+# group/other), so log discovery silently returns nothing. Grant only that
+# capability — nothing else — so the read-only walker can enumerate the
+# account trees. No write capability is granted.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+AmbientCapabilities=CAP_DAC_READ_SEARCH
+
+# Resource limits — keep this service gentle on a live WHM box.
+MemoryMax=512M
+TasksMax=256
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target
