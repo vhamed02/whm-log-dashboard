@@ -142,10 +142,14 @@ app.route({
     // The absolute path is still never sent to the browser.
     const homeRoot = config.homeRoot;
     const accHome = path.join(homeRoot, account);
+    // Most-recently-modified first, so the logs an admin is most likely to want
+    // (the ones actively being written) sit at the top of the list. Ties fall
+    // back to path so the order stays stable between refreshes.
+    const sorted = [...entries].sort((a, b) => (b.mtime - a.mtime) || a.path.localeCompare(b.path));
     return {
       account,
       cachedAt: Date.now(),
-      logs: entries.map(e => {
+      logs: sorted.map(e => {
         const base = path.basename(e.path);
         let rel = path.relative(accHome, e.path) || base;
         if (rel.startsWith('..')) rel = base; // symlink resolved outside home — fall back to basename
@@ -158,6 +162,49 @@ app.route({
         };
       }),
     };
+  },
+});
+
+// ---------- API: download a whole log file as an attachment ----------
+// Read-only, same authorization path as streaming: the opaque id must resolve to
+// a file inside this account's home (resolveLogId re-realpaths and re-checks), so
+// this can never be turned into an arbitrary-file download.
+app.route({
+  method: 'GET',
+  url: '/download',
+  schema: {
+    querystring: {
+      type: 'object',
+      required: ['account', 'file'],
+      properties: { account: { type: 'string' }, file: { type: 'string' } },
+    },
+  },
+  handler: async (req, reply) => {
+    const { account } = req.query;
+    const file = String(req.query.file);
+    let realPath;
+    try { realPath = discovery.resolveLogId(account, file); }
+    catch (e) {
+      if (e instanceof SecurityError) return reply.code(403).send({ error: e.message });
+      throw e;
+    }
+    let st;
+    try { st = fs.statSync(realPath); }
+    catch { return reply.code(404).send({ error: 'file not found' }); }
+    if (!st.isFile()) return reply.code(404).send({ error: 'not a regular file' });
+
+    // RFC 5987: an ASCII-safe filename for legacy clients plus a UTF-8 filename*.
+    const base = path.basename(realPath);
+    const asciiName = base.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+    reply.header('Content-Type', 'text/plain; charset=utf-8');
+    reply.header('Content-Disposition',
+      `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(base)}`);
+    reply.header('Cache-Control', 'no-store');
+    if (st.size === 0) return reply.send('');
+    // Cap the stream at the size measured now: a log being actively appended must
+    // not make the response outrun a browser that trusts the initial size, and we
+    // never claim a Content-Length that a later truncation could fail to fill.
+    return reply.send(fs.createReadStream(realPath, { start: 0, end: st.size - 1 }));
   },
 });
 
