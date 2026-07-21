@@ -19,6 +19,7 @@ const searchInput = $('search-input');
 const liveToggle = $('live-toggle');
 const refreshBtn = $('refresh-btn');
 const clearBtn = $('clear-btn');
+const downloadBtn = $('download-btn');
 const themeToggle = $('theme-toggle');
 const viewerMeta = $('viewer-meta');
 const quickbar = $('quickbar');
@@ -588,6 +589,7 @@ async function loadAccounts(force) {
 async function selectAccount(account) {
   state.selectedAccount = account;
   state.selectedLogId = null;
+  updateDownloadBtn();
   state.logFilter = '';
   logsFilter.value = '';
   accountSelect.value = account;
@@ -615,12 +617,20 @@ async function loadLogs(force, account) {
   if (state.selectedLogId && !state.logs.some(l => l.id === state.selectedLogId)) {
     state.selectedLogId = null;
   }
+  updateDownloadBtn();
 }
 
 function selectLog(id) {
   state.selectedLogId = id;
   renderLogs();
+  updateDownloadBtn();
   if (state.searchQuery) startSearch(); else startStream();
+}
+
+// The header download control acts on the currently selected log file; there is
+// nothing to download until one is picked.
+function updateDownloadBtn() {
+  downloadBtn.disabled = !(state.selectedAccount && state.selectedLogId);
 }
 
 // ---------- event wiring ----------
@@ -652,6 +662,21 @@ searchInput.addEventListener('input', (e) => {
 });
 
 clearBtn.addEventListener('click', clearView);
+
+// Download the selected log via a transient anchor. Same-origin GET, so the
+// browser reuses the dashboard's Basic-Auth credentials; the server's
+// Content-Disposition makes it save instead of navigating away.
+downloadBtn.addEventListener('click', () => {
+  if (!state.selectedAccount || !state.selectedLogId) return;
+  const url = '/download?account=' + encodeURIComponent(state.selectedAccount) +
+    '&file=' + encodeURIComponent(state.selectedLogId);
+  const a = document.createElement('a');
+  a.href = url;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+});
 
 refreshBtn.addEventListener('click', async () => {
   refreshBtn.classList.add('spin');

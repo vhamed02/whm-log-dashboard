@@ -148,6 +148,15 @@ button { background: var(--btn-bg); color: var(--text); border: 1px solid var(--
   border-radius: 4px; padding: 4px 10px; cursor: pointer; font: inherit; }
 button:hover { border-color: var(--accent); }
 
+/* Header icon-only button (download). Square, centres its SVG, and reads as
+   inert when there is no selected file to act on. */
+.icon-btn-lg {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 30px; min-width: 34px; padding: 4px 8px;
+}
+.icon-btn-lg svg { display: block; }
+.icon-btn-lg:disabled { opacity: 0.4; cursor: not-allowed; border-color: var(--line); }
+
 /* Theme toggle — pinned to the far right of the header. */
 #theme-toggle {
   margin-left: auto; display: inline-flex; align-items: center; justify-content: center;
