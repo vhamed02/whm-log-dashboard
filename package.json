@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check lib/config.js && node --check lib/security.js && node --check lib/discovery.js && node --check lib/stream.js && node --check lib/notify-store.js && node --check lib/brevo.js && node --check lib/notifier.js && node --check lib/htaccess.js"
+    "check": "node --check server.js && node --check lib/config.js && node --check lib/security.js && node --check lib/discovery.js && node --check lib/stream.js && node --check lib/notify-store.js && node --check lib/brevo.js && node --check lib/notifier.js && node --check lib/loginguard.js"
   },
   "engines": {
     "node": ">=18"

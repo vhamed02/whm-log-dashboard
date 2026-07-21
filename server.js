@@ -15,7 +15,7 @@ const {
 const notifyStore = require('./lib/notify-store');
 const brevo = require('./lib/brevo');
 const { Notifier, composeTest } = require('./lib/notifier');
-const { HtaccessGate } = require('./lib/htaccess');
+const { LoginGuard } = require('./lib/loginguard');
 
 assertConfig();
 notifyStore.load();
@@ -30,22 +30,6 @@ const app = Fastify({
   bodyLimit: 8 * 1024,
   keepAliveTimeout: 65000,
   ...(config.tls.enabled ? { https: loadTls() } : {}),
-});
-
-// ---------- .htaccess gateway (runs BEFORE any app-level auth) ----------
-// Refuses to boot when the configured .htaccess protection is missing/broken, and
-// rejects every request that did not provably pass Apache's .htaccess login. This
-// is the outermost layer: it is checked first, so nothing downstream — not even
-// the app's own Basic Auth or static files — is reachable without it.
-const htGate = new HtaccessGate(app.log);
-htGate.assertBoot(); // throws -> process exits (fail safe) if protection is absent
-
-app.addHook('onRequest', async (req, reply) => {
-  const rej = htGate.check(req);
-  if (rej) {
-    reply.code(rej.code).send(rej.message);
-    return reply;
-  }
 });
 
 // ---------- Static assets (served manually; no @fastify/static dep) ----------
@@ -78,14 +62,34 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(ab, bb);
 }
 
+// Brute-force lockout: after too many wrong passwords from one IP, block it for a
+// cooldown so the single credential can't be guessed at internet speed.
+const loginGuard = new LoginGuard(config.auth);
+
 app.addHook('onRequest', async (req, reply) => {
   if (!EXPECTED_AUTH) return; // auth disabled (LD_ALLOW_NO_AUTH) — nothing to check
+  const ip = req.ip || (req.socket && req.socket.remoteAddress) || 'unknown';
+
+  const wait = loginGuard.retryAfter(ip);
+  if (wait > 0) {
+    reply.header('Retry-After', Math.ceil(wait / 1000));
+    reply.code(429).send('too many failed logins — try again later');
+    return reply;
+  }
+
   const header = req.headers.authorization || '';
   if (!safeEqual(header, EXPECTED_AUTH)) {
+    // Count only actual credential attempts: a missing header is just a browser
+    // asking for the prompt, not a password guess, so it never triggers a lockout.
+    if (header) {
+      const locked = loginGuard.fail(ip);
+      if (locked) app.log.warn(`[auth] locked out ${ip} for ${Math.round(locked / 60000)}min after ${config.auth.maxFails} failed logins`);
+    }
     reply.header('WWW-Authenticate', 'Basic realm="log-dashboard"');
     reply.code(401).send('auth required');
     return reply;
   }
+  loginGuard.succeed(ip); // valid login clears any accumulated failures for this IP
 });
 
 app.route({
@@ -608,8 +612,7 @@ app.listen({ host: config.host, port: config.port }, (err) => {
   const scheme = config.tls.enabled ? 'https' : 'http';
   app.log.info(`log-dashboard listening on ${scheme}://${config.host}:${config.port}`);
   if (config.tls.enabled) app.log.info(`TLS: serving ${config.tls.domain} from ${config.tls.cert} (SIGHUP reloads on cert renewal)`);
-  app.log.info(`Auth: basic auth user="${config.user}" (${config.pass ? 'enabled' : 'DISABLED — set LD_PASS'})`);
-  htGate.startWatch(); // re-validate the .htaccess protection on a timer (fail safe)
+  app.log.info(`Auth: basic auth user="${config.user}" (${config.pass ? 'enabled' : 'DISABLED — set LD_PASS'}), lockout after ${config.auth.maxFails} failed logins`);
   notifier.start();
 });
 
@@ -629,7 +632,6 @@ process.on('SIGHUP', () => {
 // Graceful shutdown — stop pollers and in-flight streams.
 function shutdown(sig) {
   app.log.info(`${sig} received, shutting down`);
-  htGate.stop();
   notifier.stop();
   app.close().then(() => process.exit(0)).catch(() => process.exit(1));
 }
