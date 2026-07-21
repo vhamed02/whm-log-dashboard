@@ -1,5 +1,6 @@
 'use strict';
 const path = require('path');
+const fs = require('fs');
 const Fastify = require('fastify');
 const { config, assertConfig, RECIPIENTS, NOTIFY_SEVERITIES, NOTIFY_PERIODS } = require('./lib/config');
 const discovery = require('./lib/discovery');
@@ -19,10 +20,16 @@ const { HtaccessGate } = require('./lib/htaccess');
 assertConfig();
 notifyStore.load();
 
+// When LD_DASHBOARD_URL is https, serve TLS natively (assertConfig already proved
+// the cert+key are readable). Otherwise plain HTTP, unchanged.
+function loadTls() {
+  return { key: fs.readFileSync(config.tls.key), cert: fs.readFileSync(config.tls.cert) };
+}
 const app = Fastify({
   logger: { level: process.env.LD_LOG_LEVEL || 'info' },
   bodyLimit: 8 * 1024,
   keepAliveTimeout: 65000,
+  ...(config.tls.enabled ? { https: loadTls() } : {}),
 });
 
 // ---------- .htaccess gateway (runs BEFORE any app-level auth) ----------
@@ -43,7 +50,6 @@ app.addHook('onRequest', async (req, reply) => {
 
 // ---------- Static assets (served manually; no @fastify/static dep) ----------
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const fs = require('fs');
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -599,10 +605,25 @@ app.setErrorHandler((err, _req, reply) => {
 // ---------- Start ----------
 app.listen({ host: config.host, port: config.port }, (err) => {
   if (err) { app.log.error(err); process.exit(1); }
-  app.log.info(`log-dashboard listening on http://${config.host}:${config.port}`);
+  const scheme = config.tls.enabled ? 'https' : 'http';
+  app.log.info(`log-dashboard listening on ${scheme}://${config.host}:${config.port}`);
+  if (config.tls.enabled) app.log.info(`TLS: serving ${config.tls.domain} from ${config.tls.cert} (SIGHUP reloads on cert renewal)`);
   app.log.info(`Auth: basic auth user="${config.user}" (${config.pass ? 'enabled' : 'DISABLED — set LD_PASS'})`);
   htGate.startWatch(); // re-validate the .htaccess protection on a timer (fail safe)
   notifier.start();
+});
+
+// Zero-downtime TLS reload: certbot's deploy hook sends SIGHUP after a renewal
+// rewrites the cert files, and we swap the running server's secure context in
+// place — no restart, no dropped connections. A plain-HTTP server ignores this.
+process.on('SIGHUP', () => {
+  if (!config.tls.enabled) return;
+  try {
+    app.server.setSecureContext(loadTls());
+    app.log.info('[tls] certificate reloaded on SIGHUP');
+  } catch (e) {
+    app.log.error(`[tls] SIGHUP reload failed: ${e.message} — keeping the current certificate`);
+  }
 });
 
 // Graceful shutdown — stop pollers and in-flight streams.
