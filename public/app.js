@@ -686,6 +686,10 @@ const notifyStatus = $('notify-status');
 const notifySaveBtn = $('notify-save');
 const notifyPreviewBtn = $('notify-preview-btn');
 const notifyTestBtn = $('notify-test-btn');
+const notifyPeriod = $('notify-period');
+
+// Fallback cadence used only until /notify/config arrives with the real catalog.
+const DEFAULT_PERIOD = '1h';
 
 const SEV_HINTS = {
   critical: 'Fatal errors, memory exhaustion, segfaults',
@@ -716,20 +720,35 @@ function hueOf(str) {
 
 const notify = {
   account: null,
-  cfg: null,            // { recipients, severities, status }
-  sel: { enabled: false, severities: new Set(), recipients: new Set(), files: new Set() },
+  cfg: null,            // { recipients, severities, periods, status }
+  sel: { enabled: false, severities: new Set(), recipients: new Set(), files: new Set(), period: DEFAULT_PERIOD },
   // Snapshot of what the SERVER currently has. The test email and the digests
   // both run off saved settings, so the UI must be able to tell the two apart:
   // unsaved ticks are not something the server can act on.
-  saved: { enabled: false, severities: new Set(), recipients: new Set(), files: new Set() },
+  saved: { enabled: false, severities: new Set(), recipients: new Set(), files: new Set(), period: DEFAULT_PERIOD },
   filesFilter: '',
   loading: false,
 };
+
+// Look up a cadence in the catalog the server sent, for its label and interval.
+function periodInfo(key) {
+  const list = (notify.cfg && notify.cfg.periods) || [];
+  return list.find(p => p.key === key) || null;
+}
+// Next epoch-aligned boundary of this cadence — the same alignment the server
+// flushes on, so what the modal says matches when mail actually goes out.
+function nextPeriodBoundary(key) {
+  const p = periodInfo(key);
+  if (!p || !p.ms) return null;
+  const now = Date.now();
+  return Math.floor(now / p.ms) * p.ms + p.ms;
+}
 
 const setEq = (a, b) => a.size === b.size && [...a].every(x => b.has(x));
 function notifyDirty() {
   const s = notify.sel, v = notify.saved;
   return s.enabled !== v.enabled ||
+    s.period !== v.period ||
     !setEq(s.severities, v.severities) ||
     !setEq(s.recipients, v.recipients) ||
     !setEq(s.files, v.files);
@@ -740,6 +759,7 @@ function notifySnapshot() {
     severities: new Set(notify.sel.severities),
     recipients: new Set(notify.sel.recipients),
     files: new Set(notify.sel.files),
+    period: notify.sel.period,
   };
 }
 
@@ -818,6 +838,7 @@ async function notifyLoad() {
       severities: new Set(settings.severities || []),
       recipients: new Set(settings.recipients || []),
       files: new Set(settings.files || []),
+      period: settings.period || DEFAULT_PERIOD,
     };
     notifySnapshot();
     // Log discovery may not have run for this account yet (e.g. the modal was
@@ -911,6 +932,29 @@ function notifyRender() {
     notifyRecipients.appendChild(label);
   }
 
+  // Frequency dropdown, populated from the catalog the server advertises. Falls
+  // back to a lone hourly option only if an old server sent none, so the control
+  // is never empty.
+  const periods = (notify.cfg.periods && notify.cfg.periods.length)
+    ? notify.cfg.periods
+    : [{ key: '1h', label: 'Every hour' }];
+  notifyPeriod.replaceChildren();
+  for (const p of periods) {
+    const opt = document.createElement('option');
+    opt.value = p.key;
+    opt.textContent = p.label;
+    notifyPeriod.appendChild(opt);
+  }
+  // If the saved cadence is one the server no longer offers, keep it selectable
+  // so saving doesn't silently change it out from under the account.
+  if (!periods.some(p => p.key === notify.sel.period)) {
+    const opt = document.createElement('option');
+    opt.value = notify.sel.period;
+    opt.textContent = notify.sel.period + ' (unavailable)';
+    notifyPeriod.appendChild(opt);
+  }
+  notifyPeriod.value = notify.sel.period;
+
   notifyRenderFiles();
   notifyRenderSummary();
 }
@@ -975,7 +1019,8 @@ function notifyRenderSummary() {
   if (!notify.cfg) return;
   const s = notify.sel;
   const st = notify.cfg.status || {};
-  const mins = Math.round((st.intervalMs || 3600000) / 60000);
+  // The chosen cadence, phrased for a sentence: "every 3 hours", "daily", …
+  const cadence = (periodInfo(s.period) && periodInfo(s.period).label.toLowerCase()) || 'every hour';
   const recipNames = (notify.cfg ? notify.cfg.recipients : [])
     .filter(r => s.recipients.has(r.id)).map(r => r.name);
 
@@ -995,7 +1040,7 @@ function notifyRenderSummary() {
     notifySummary.innerHTML =
       `<strong>${[...s.severities].join(', ')}</strong> entries from <strong>${s.files.size}</strong> ` +
       `file${s.files.size === 1 ? '' : 's'} go to <strong>${recipNames.join(', ')}</strong>, ` +
-      `batched into one email every <strong>${mins} minutes</strong> — and only when there is something to report.`;
+      `batched into one email <strong>${cadence}</strong> — and only when there is something to report.`;
   }
 
   const dirty = notifyDirty();
@@ -1003,7 +1048,14 @@ function notifyRenderSummary() {
   const bits = [];
   if (dirty) bits.push('unsaved changes');
   if (buf) bits.push(`${buf.total} entr${buf.total === 1 ? 'y' : 'ies'} buffered for the next digest`);
-  if (st.nextFlushAt) bits.push('next digest ' + fmtTs(new Date(st.nextFlushAt).toISOString()));
+  // A pending batch has a real server-side flush time; otherwise show when the
+  // next digest boundary of the selected cadence falls. When the cadence has
+  // unsaved edits, the boundary reflects the new pick — flag it as not yet saved.
+  const nextAt = (buf && buf.nextFlushAt) || nextPeriodBoundary(s.period);
+  if (nextAt) {
+    const changed = s.period !== notify.saved.period;
+    bits.push('next digest ' + fmtTs(new Date(nextAt).toISOString()) + (changed ? ' (after save)' : ''));
+  }
   if (st.lastError) bits.push('last send error: ' + st.lastError);
   notifyStatus.textContent = bits.join(' · ');
   notifySaveBtn.classList.toggle('dirty', dirty);
@@ -1033,6 +1085,7 @@ async function notifySave() {
         severities: [...notify.sel.severities],
         recipients: [...notify.sel.recipients],
         files: [...notify.sel.files],
+        period: notify.sel.period,
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -1046,7 +1099,9 @@ async function notifySave() {
         severities: new Set(data.settings.severities || []),
         recipients: new Set(data.settings.recipients || []),
         files: new Set(data.settings.files || []),
+        period: data.settings.period || DEFAULT_PERIOD,
       };
+      notifyPeriod.value = notify.sel.period;
     }
     notifySnapshot();
     showToast('Notification settings saved');
@@ -1124,6 +1179,11 @@ notifyBtn.addEventListener('click', notifyOpen);
 notifyEnabled.addEventListener('change', () => {
   if (!notify.cfg) return;
   notify.sel.enabled = notifyEnabled.checked;
+  notifyRenderSummary();
+});
+notifyPeriod.addEventListener('change', () => {
+  if (!notify.cfg) return;
+  notify.sel.period = notifyPeriod.value;
   notifyRenderSummary();
 });
 notifyFilesFilter.addEventListener('input', (e) => {
