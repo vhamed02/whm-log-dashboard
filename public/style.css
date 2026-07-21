@@ -389,6 +389,16 @@ button:hover { border-color: var(--accent); }
 .card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .card-head .hint { margin-left: auto; font-size: 11px; color: var(--muted); }
 
+/* Digest cadence dropdown. Matches the topbar controls so the form reads as one
+   set of inputs, but spans the card so it is an obvious, tappable target. */
+.period-select {
+  width: 100%; background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px;
+  font: inherit; outline: none; cursor: pointer;
+}
+.period-select:focus { border-color: var(--accent); }
+.period-note { margin: 8px 0 0; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+
 /* Warning strip — e.g. "disarmed: nothing will actually be sent".
    The icon is absolutely positioned, never a flex/grid item: the body of this
    element is set via innerHTML and any element child would become its own item. */
