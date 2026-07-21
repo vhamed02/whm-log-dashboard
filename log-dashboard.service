@@ -9,6 +9,9 @@ WorkingDirectory=/root/log-dashboard
 # Load credentials/config from /root/log-dashboard/.env
 EnvironmentFile=/root/log-dashboard/.env
 ExecStart=/usr/bin/node /root/log-dashboard/server.js
+# SIGHUP hot-reloads the TLS certificate in place (used by certbot's deploy-hook
+# `systemctl reload log-dashboard` after a renewal) — no restart, no dropped conns.
+ExecReload=/bin/kill -HUP $MAINPID
 
 # Hardening — this service reads /home/* (read-only intent). Run as root only
 # because cPanel account log files are typically owner-readable by root;

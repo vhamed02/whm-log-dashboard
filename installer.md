@@ -220,6 +220,60 @@ HTTP sends the password reversibly — always put TLS in front for remote access
 
 ---
 
+## 6b. Serve HTTPS on a dedicated port with certbot (recommended)
+
+The app can terminate TLS itself on a chosen port, so it is reachable at, e.g.,
+`https://srv6.dimensaoglobal.com:3201` with no reverse proxy. Everything is driven
+by **`LD_DASHBOARD_URL`**: an `https://host:port` value turns on TLS, sets the
+listen port, and picks the certbot cert for `host`. The hostname **must resolve
+to this server** — that is who the certificate is issued for.
+
+**1. Point the app at the URL** (do NOT restart yet — the cert doesn't exist):
+```ini
+# .env
+LD_HOST=0.0.0.0
+LD_DASHBOARD_URL=https://srv6.dimensaoglobal.com:3201
+```
+
+**2. Open the port** (firewalld: `--add-port=3201/tcp`; or CSF `TCP_IN` + `csf -r`).
+
+**3. Get the certificate.** Let's Encrypt only validates on **:80/:443**, so the
+HTTP-01 challenge is served on :80 even though the app runs on :3201.
+
+- **No Apache/other web server on :80** (e.g. a plain srv6): use standalone:
+  ```bash
+  dnf install -y certbot          # or: python3 -m pip install certbot
+  certbot certonly --standalone -d srv6.dimensaoglobal.com \
+      --deploy-hook 'systemctl reload log-dashboard'   # SIGHUP -> hot cert reload
+  ```
+- **Apache already owns :80** (a cPanel/WHM box like this one): use webroot, and
+  add a challenge exception so `/.well-known/acme-challenge/` is served from a
+  local dir while everything else redirects to the app. Add to the `:80` vhost:
+  ```apache
+  Alias /.well-known/acme-challenge/ /var/www/letsencrypt/.well-known/acme-challenge/
+  <Directory "/var/www/letsencrypt"><Require all granted></Directory>
+  ```
+  then:
+  ```bash
+  mkdir -p /var/www/letsencrypt
+  certbot certonly --webroot -w /var/www/letsencrypt -d log.dglab.pt \
+      --deploy-hook 'systemctl reload log-dashboard'
+  ```
+
+**4. Start serving HTTPS:** `systemctl restart log-dashboard`. The boot log shows
+`listening on https://…`. The app **refuses to boot** if https is on but the cert
+files are missing (fail safe), so obtain the cert first.
+
+**Renewals are hands-off.** `certbot renew` runs from its own timer; the
+`--deploy-hook` sends `systemctl reload` (SIGHUP), and the app swaps the new
+certificate into the running server with **no downtime, no dropped connections**.
+
+> `LD_TLS_CERT` / `LD_TLS_KEY` override the default
+> `/etc/letsencrypt/live/<host>/{fullchain,privkey}.pem` paths if your cert lives
+> elsewhere.
+
+---
+
 ## 7. (Optional) Enable email notifications
 
 Notifications are off until you deliberately arm them. To enable digest emails via
