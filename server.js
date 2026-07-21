@@ -1,7 +1,7 @@
 'use strict';
 const path = require('path');
 const Fastify = require('fastify');
-const { config, assertConfig, RECIPIENTS, NOTIFY_SEVERITIES } = require('./lib/config');
+const { config, assertConfig, RECIPIENTS, NOTIFY_SEVERITIES, NOTIFY_PERIODS } = require('./lib/config');
 const discovery = require('./lib/discovery');
 const { SecurityError } = require('./lib/security');
 const {
@@ -401,6 +401,7 @@ app.route({
   handler: async () => ({
     recipients: RECIPIENTS.map(r => ({ id: r.id, name: r.name, email: r.email })),
     severities: NOTIFY_SEVERITIES,
+    periods: NOTIFY_PERIODS.map(p => ({ key: p.key, label: p.label, ms: p.ms })),
     status: notifier.status(),
   }),
 });
@@ -429,6 +430,9 @@ app.route({
         severities: { type: 'array', items: { type: 'string' } },
         recipients: { type: 'array', items: { type: 'string' } },
         files: { type: 'array', items: { type: 'string' } },
+        // Optional: older clients omit it and the store keeps the default. The
+        // value is range-checked against the offered periods in notifyStore.set().
+        period: { type: 'string' },
       },
     },
   },
