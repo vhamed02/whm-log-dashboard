@@ -226,9 +226,12 @@ Notifications are off until you deliberately arm them. To enable digest emails v
 **Brevo** (transactional email) — each account picks its own frequency in the UI
 (every hour / 3h / 6h / 12h / daily / weekly / monthly):
 
-1. In `lib/config.js`, edit the `RECIPIENTS` list — replace the placeholder
-   `reza`/`hamed`/`ali` entries with the real people who may receive digests.
-   Keep the `id` stable once accounts have subscribed to it.
+1. In `.env`, set `LD_RECIPIENTS` to the real people who may receive digests —
+   comma-separated `id:Name:email` entries, e.g.
+   `LD_RECIPIENTS="joao:Joao Rosa:joao@example.com,ops:On-call:ops@example.com"`
+   (quote the value so names with spaces survive).
+   Keeping them in `.env` (git-ignored) means real addresses never land in the
+   public repo. Keep each `id` stable once accounts have subscribed to it.
 2. In Brevo → **SMTP & API → API keys**, create a key. Verify a sender
    address/domain under **Senders**.
 3. In `.env` set:

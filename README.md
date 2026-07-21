@@ -110,8 +110,12 @@ is due, and every interval is UTC-boundary aligned (e.g. a 6-hour digest lands a
 (24h / 7d / 30d), not calendar midnight / Monday / the 1st. **A quiet interval
 sends no email at all.**
 
-Recipients are defined in `RECIPIENTS` in `lib/config.js`. Changing a name or
-address there is safe; changing an `id` orphans that selection in saved settings.
+Recipients come from **`LD_RECIPIENTS` in `.env`** — a comma-separated list of
+`id:Name:email` entries (e.g. `joao:Joao Rosa:joao@example.com,ops:On-call:ops@example.com`).
+Defining them there keeps real addresses out of this public repo and out of any
+tracked file, so `git pull` never conflicts with your roster. When unset, the
+placeholder list in `lib/config.js` is used. Changing a name or address is safe;
+changing an `id` orphans that selection in saved settings.
 
 ### Enabling sending (the arm switch)
 
