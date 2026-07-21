@@ -222,8 +222,9 @@ HTTP sends the password reversibly — always put TLS in front for remote access
 
 ## 7. (Optional) Enable email notifications
 
-Notifications are off until you deliberately arm them. To enable hourly digest
-emails via **Brevo** (transactional email):
+Notifications are off until you deliberately arm them. To enable digest emails via
+**Brevo** (transactional email) — each account picks its own frequency in the UI
+(every hour / 3h / 6h / 12h / daily / weekly / monthly):
 
 1. In `lib/config.js`, edit the `RECIPIENTS` list — replace the placeholder
    `reza`/`hamed`/`ali` entries with the real people who may receive digests.
@@ -241,8 +242,10 @@ emails via **Brevo** (transactional email):
 
 > The server **refuses to boot** with `LD_NOTIFY_ENABLED=1` while the API key or
 > sender email is missing — it can never look "armed" while unable to send.
-> While disarmed (`=0`) it still watches, classifies, and logs an hourly
-> "would have sent" summary, so you can dry-run safely.
+> While disarmed (`=0`) it still watches, classifies, and logs a "would have sent"
+> summary at each account's chosen interval, so you can dry-run safely.
+> `LD_NOTIFY_INTERVAL_MS` is now just the base tick / default cadence — the actual
+> per-account frequency is set in the modal and stored in `data/notifications.json`.
 
 Per-account recipient/severity selections are made in the UI and persisted to
 `~/log-dashboard/data/notifications.json` (the only writable path under systemd).

@@ -88,9 +88,12 @@ Per-cPanel-account email alerts via Brevo, configured in the UI under **🔔 Not
 
 **How it is configured.** Per account: an on/off switch, which **log types**
 (`critical`, `error`, `warning`) to subscribe to, which **receivers** get them,
-and which **log files** to watch. Severities and receivers are two independent
-lists — every ticked severity goes to every ticked receiver. An account only
-sends when all four are non-empty (enabled + ≥1 severity + ≥1 receiver + ≥1 file).
+which **log files** to watch, and how often to send — the **frequency**: every
+hour, every 3 / 6 / 12 hours, daily, weekly, or monthly. Severities and receivers
+are two independent lists — every ticked severity goes to every ticked receiver.
+An account only sends when all four selections are non-empty (enabled + ≥1
+severity + ≥1 receiver + ≥1 file); the frequency always has a value (default
+hourly).
 
 `info` is deliberately not subscribable: it is the catch-all bucket for
 unclassified lines and would make every digest noise.
@@ -100,8 +103,12 @@ independent of the browser, and shares the same per-file poller as the live view
 so watching a file costs nothing extra when it is also open on screen. Matching
 entries are buffered and deduplicated (entries differing only by timestamp, pid,
 memory address or IP collapse into one row with a count), then **one grouped
-email per account per hour** goes out to all its receivers in a single API call.
-**A quiet hour sends no email at all.**
+email per account per chosen interval** goes out to all its receivers in a single
+API call. Each account keeps its own cadence; a shared base tick just checks who
+is due, and every interval is UTC-boundary aligned (e.g. a 6-hour digest lands at
+00:00/06:00/12:00/18:00). `daily`/`weekly`/`monthly` are rolling fixed intervals
+(24h / 7d / 30d), not calendar midnight / Monday / the 1st. **A quiet interval
+sends no email at all.**
 
 Recipients are defined in `RECIPIENTS` in `lib/config.js`. Changing a name or
 address there is safe; changing an `id` orphans that selection in saved settings.
@@ -111,8 +118,8 @@ address there is safe; changing an `id` orphans that selection in saved settings
 `LD_NOTIFY_ENABLED` defaults to `0`, and **nothing can be emailed while it is 0** —
 `lib/brevo.js` refuses at the transport, so it is a property of the code rather
 than a discipline the callers must remember. While disarmed the notifier still
-watches, classifies and buffers normally, and once an hour logs the digest it
-*would* have sent. Use **Preview digest** in the UI to see the exact email.
+watches, classifies and buffers normally, and at each account's interval logs the
+digest it *would* have sent. Use **Preview digest** in the UI to see the exact email.
 
 To go live:
 
@@ -128,8 +135,11 @@ is missing, so it can never look armed while being unable to send. Once armed,
 ### Notification behaviour worth knowing
 
 - **Buffered entries are dropped on restart, not flushed.** Flushing on exit would
-  turn a crash-restart loop into an email flood. Up to one hour of alerts can be
+  turn a crash-restart loop into an email flood. Up to one interval of alerts can be
   lost to a restart; the logs themselves are of course untouched.
+- **Frequency changes take effect within one base tick.** Re-picking an account's
+  interval re-arms its schedule to the new cadence's next boundary; the pending
+  batch is never sent early because of the change.
 - **A failed send keeps its entries** and rolls them into the next digest rather
   than losing them. Only `429`/`5xx` are retried — a timeout is not, since the mail
   may in fact have been delivered and a duplicate digest is worse than a late one.
