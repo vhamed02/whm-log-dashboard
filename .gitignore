@@ -11,6 +11,12 @@ node_modules/
 # holding real account names. Not source.
 data/
 
+# Apache gateway secrets — a real .htaccess holds LD_HTACCESS_SECRET and .htpasswd
+# holds credentials. Never commit them; .htaccess.example is the tracked template.
+.htaccess
+.htpasswd
+!.htaccess.example
+
 # Logs and OS cruft
 *.log
 .DS_Store

@@ -1,0 +1,35 @@
+# =====================================================================
+#  Log Dashboard — Apache .htaccess gateway (EXAMPLE)
+# =====================================================================
+# Copy to the docroot Apache serves for the dashboard vhost, e.g.
+#   /var/www/log-dashboard/.htaccess   (then point LD_HTACCESS_FILE at it)
+#
+# This file provides the HUMAN login (Basic Auth against a .htpasswd) AND
+# stamps the two headers the Node app requires as proof the request passed
+# .htaccess. The ProxyPass itself must live in the vhost (see installer.md) —
+# proxy directives are NOT allowed in .htaccess.
+#
+# Requires:  AllowOverride AuthConfig  (for the auth directives)
+#            mod_headers enabled       (for the RequestHeader directives)
+#            mod_auth_basic, mod_authn_file
+# ---------------------------------------------------------------------
+
+# --- 1. Require a valid .htaccess login for every request ---
+AuthType Basic
+AuthName "Log Dashboard"
+# Create with:  htpasswd -c /etc/log-dashboard/.htpasswd alice
+AuthUserFile "/etc/log-dashboard/.htpasswd"
+Require valid-user
+
+# --- 2. Prove to the backend that this request passed .htaccess ---
+# Strip anything the client may have tried to send, THEN set our own values so a
+# client can never forge the gateway proof by supplying these headers itself.
+<IfModule mod_headers.c>
+  RequestHeader unset X-LD-Gateway
+  RequestHeader unset X-LD-User
+
+  # Must byte-for-byte equal LD_HTACCESS_SECRET in the app's .env.
+  RequestHeader set X-LD-Gateway "REPLACE_WITH_LD_HTACCESS_SECRET"
+  # The authenticated .htaccess username. `expr=%{REMOTE_USER}` needs Apache 2.4+.
+  RequestHeader set X-LD-User "expr=%{REMOTE_USER}"
+</IfModule>

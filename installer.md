@@ -255,6 +255,84 @@ Per-account recipient/severity selections are made in the UI and persisted to
 
 ---
 
+## 7b. (Optional, recommended) Require an Apache `.htaccess` gateway
+
+This adds an outer layer so the app **refuses to run unless it is behind an
+Apache `.htaccess` login**. Apache does the human Basic-Auth, then proves each
+request passed it by injecting a shared secret + the authenticated username; the
+app verifies both on every request and fails safe when the protection is missing.
+
+**1. Bind the app to loopback** so nothing but Apache can reach it — in `.env`:
+```ini
+LD_HOST=127.0.0.1
+LD_PORT=3212
+```
+
+**2. Create the login file** (`.htpasswd`) and a gateway secret:
+```bash
+mkdir -p /etc/log-dashboard
+htpasswd -c /etc/log-dashboard/.htpasswd alice      # add more: htpasswd (no -c)
+openssl rand -hex 24                                 # copy this secret
+```
+
+**3. Drop in the `.htaccess`** (template in the repo: `.htaccess.example`) at the
+docroot Apache serves for this vhost, e.g. `/var/www/log-dashboard/.htaccess`:
+```apache
+AuthType Basic
+AuthName "Log Dashboard"
+AuthUserFile "/etc/log-dashboard/.htpasswd"
+Require valid-user
+
+<IfModule mod_headers.c>
+  RequestHeader unset X-LD-Gateway
+  RequestHeader unset X-LD-User
+  RequestHeader set   X-LD-Gateway "PASTE_THE_openssl_SECRET_HERE"
+  RequestHeader set   X-LD-User    "expr=%{REMOTE_USER}"
+</IfModule>
+```
+
+**4. Proxy to the app in the vhost** (proxy directives are not allowed in
+`.htaccess`). Needs `mod_proxy`, `mod_proxy_http`, `mod_headers`:
+```apache
+<VirtualHost *:80>
+    ServerName logs.example.com
+    DocumentRoot /var/www/log-dashboard
+    <Directory /var/www/log-dashboard>
+        AllowOverride AuthConfig FileInfo
+        Require all granted
+    </Directory>
+    ProxyPreserveHost On
+    ProxyPass        / http://127.0.0.1:3212/
+    ProxyPassReverse / http://127.0.0.1:3212/
+</VirtualHost>
+```
+
+**5. Point the app at the protection and arm it** — in `.env`:
+```ini
+LD_HTACCESS_REQUIRED=1
+LD_HTACCESS_SECRET=the_same_openssl_secret
+LD_HTACCESS_FILE=/var/www/log-dashboard/.htaccess
+# LD_HTPASSWD_FILE=/etc/log-dashboard/.htpasswd   # only if not in the .htaccess
+```
+
+**6. Reload both:**
+```bash
+apachectl configtest && systemctl reload httpd    # or apache2
+systemctl restart log-dashboard
+```
+
+Now: a request straight to `127.0.0.1:3212` (no secret) gets **403**; a request
+that skipped the `.htaccess` login gets **403**; deleting/weakening the
+`.htaccess` while running locks the app to **503** within `LD_HTACCESS_RECHECK_MS`;
+and a missing/misconfigured setup makes the app **refuse to boot**. The app's own
+`LD_PASS` Basic-Auth still applies underneath — to avoid a double login prompt,
+set `LD_ALLOW_NO_AUTH=1` (safe here: the gateway secret is now the access proof).
+
+> The `.htaccess` and `.htpasswd` are git-ignored (they hold the secret and
+> credentials). Only `.htaccess.example` is tracked.
+
+---
+
 ## 8. Troubleshooting
 
 **The account/log list is empty (but no error).**
@@ -271,6 +349,23 @@ Set a strong `LD_PASS` (≥ 8, ideally ≥ 16 chars) in `.env`, or set
 
 **`LD_NOTIFY_ENABLED=1 but LD_BREVO_API_KEY/SENDER is unset`.**
 Fill in the Brevo key and a verified sender, or set `LD_NOTIFY_ENABLED=0`.
+
+**Everything returns 403 after enabling the `.htaccess` gateway (§7b).**
+The app isn't seeing valid gateway headers. Check: the `X-LD-Gateway` value in the
+`.htaccess` byte-for-byte equals `LD_HTACCESS_SECRET`; `mod_headers` is enabled
+(`RequestHeader` is silently ignored otherwise); and requests really go through
+Apache, not straight to the Node port. The app log line `[htaccess] enforcement
+ARMED` confirms the mode is on.
+
+**Everything returns 503 with the gateway enabled.**
+The app has **locked** because the `.htaccess`/`.htpasswd` failed re-validation —
+the log says why (e.g. file removed, `Require valid-user` dropped, empty
+`.htpasswd`). Restore the protection; it unlocks within `LD_HTACCESS_RECHECK_MS`.
+
+**Refuses to boot: `[htaccess] refusing to start …`.**
+`LD_HTACCESS_REQUIRED=1` but the protection is missing/misconfigured (no
+`LD_HTACCESS_SECRET`, or the configured `LD_HTACCESS_FILE` is invalid). Fix it, or
+set `LD_HTACCESS_REQUIRED=0` to disable the layer.
 
 **`node: command not found` from systemd.**
 `ExecStart=` uses `/usr/bin/node`. Point it at your real binary:
