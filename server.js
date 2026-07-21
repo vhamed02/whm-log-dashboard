@@ -14,6 +14,7 @@ const {
 const notifyStore = require('./lib/notify-store');
 const brevo = require('./lib/brevo');
 const { Notifier, composeTest } = require('./lib/notifier');
+const { HtaccessGate } = require('./lib/htaccess');
 
 assertConfig();
 notifyStore.load();
@@ -22,6 +23,22 @@ const app = Fastify({
   logger: { level: process.env.LD_LOG_LEVEL || 'info' },
   bodyLimit: 8 * 1024,
   keepAliveTimeout: 65000,
+});
+
+// ---------- .htaccess gateway (runs BEFORE any app-level auth) ----------
+// Refuses to boot when the configured .htaccess protection is missing/broken, and
+// rejects every request that did not provably pass Apache's .htaccess login. This
+// is the outermost layer: it is checked first, so nothing downstream — not even
+// the app's own Basic Auth or static files — is reachable without it.
+const htGate = new HtaccessGate(app.log);
+htGate.assertBoot(); // throws -> process exits (fail safe) if protection is absent
+
+app.addHook('onRequest', async (req, reply) => {
+  const rej = htGate.check(req);
+  if (rej) {
+    reply.code(rej.code).send(rej.message);
+    return reply;
+  }
 });
 
 // ---------- Static assets (served manually; no @fastify/static dep) ----------
@@ -584,12 +601,14 @@ app.listen({ host: config.host, port: config.port }, (err) => {
   if (err) { app.log.error(err); process.exit(1); }
   app.log.info(`log-dashboard listening on http://${config.host}:${config.port}`);
   app.log.info(`Auth: basic auth user="${config.user}" (${config.pass ? 'enabled' : 'DISABLED — set LD_PASS'})`);
+  htGate.startWatch(); // re-validate the .htaccess protection on a timer (fail safe)
   notifier.start();
 });
 
 // Graceful shutdown — stop pollers and in-flight streams.
 function shutdown(sig) {
   app.log.info(`${sig} received, shutting down`);
+  htGate.stop();
   notifier.stop();
   app.close().then(() => process.exit(0)).catch(() => process.exit(1));
 }
