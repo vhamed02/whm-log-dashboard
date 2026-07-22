@@ -562,7 +562,7 @@ button:hover { border-color: var(--accent); }
 .link-btn:hover:not(:disabled) { background: var(--surface-hover); color: var(--accent); filter: none; }
 .link-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .scrollbox {
-  flex: 1 1 auto; min-height: 220px; max-height: 460px; overflow-y: auto;
+  flex: 1 1 auto; min-height: 220px; max-height: 100%; overflow-y: auto;
   border: 0; border-radius: 0; background: transparent; padding: 1px;
 }
 /* flex:none — the scrollbox stretches to the column height, and a dashed box
