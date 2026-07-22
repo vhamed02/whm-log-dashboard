@@ -795,6 +795,21 @@ function periodSendTime(key) {
   return 'on UTC-aligned boundaries';
 }
 
+// Compact send-time tag for the dropdown option label — only for the day-and-up
+// cadences (daily/weekly/monthly), where the send time isn't obvious from the
+// label. Sub-daily cadences ("Every 3 hours") already read plainly, so no tag.
+function periodTimeTag(key) {
+  const p = periodInfo(key);
+  if (!p || !p.ms || p.ms < DAY_MS) return '';
+  const ms = p.ms;
+  if (ms === DAY_MS) return '00:00 UTC';
+  if (ms === 7 * DAY_MS) {
+    const wd = WEEKDAYS[new Date(Math.floor(Date.now() / ms) * ms).getUTCDay()];
+    return `${wd.slice(0, 3)} 00:00 UTC`;
+  }
+  return `every ${ms / DAY_MS} days, 00:00 UTC`;
+}
+
 const setEq = (a, b) => a.size === b.size && [...a].every(x => b.has(x));
 function notifyDirty() {
   const s = notify.sel, v = notify.saved;
@@ -993,7 +1008,8 @@ function notifyRender() {
   for (const p of periods) {
     const opt = document.createElement('option');
     opt.value = p.key;
-    opt.textContent = p.label;
+    const tag = periodTimeTag(p.key);
+    opt.textContent = tag ? `${p.label} — ${tag}` : p.label;
     notifyPeriod.appendChild(opt);
   }
   // If the saved cadence is one the server no longer offers, keep it selectable
