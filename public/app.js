@@ -770,44 +770,18 @@ function nextPeriodBoundary(key) {
   return Math.floor(now / p.ms) * p.ms + p.ms;
 }
 
-// Human phrase for the exact wall-clock time(s) a cadence fires on. Digests flush
-// on epoch-aligned boundaries (Math.floor(t/ms)*ms), so these are fixed UTC marks,
-// never calendar dates: daily lands at 00:00 UTC, weekly on the weekday the 7-day
-// epoch grid falls on (Thursday), monthly every rolling 30 days at 00:00 UTC.
+// Digests flush on epoch-aligned boundaries (all land at 00:00 UTC). For the
+// day-and-up cadences (daily/weekly/monthly) that time isn't obvious from the
+// label, so tag them with the clock time in the viewer's local timezone, e.g.
+// "01:00 AM Lisbon time". Sub-daily cadences read plainly, so no tag.
 const DAY_MS = 86400000;
-const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-function periodSendTime(key) {
-  const p = periodInfo(key);
-  if (!p || !p.ms) return '';
-  const ms = p.ms;
-  if (ms < DAY_MS && DAY_MS % ms === 0) {
-    const h = ms / 3600000;
-    return h === 1
-      ? 'at the top of every hour, UTC'
-      : `every ${h} hours on the UTC-aligned marks (00:00, ${h}:00, …)`;
-  }
-  if (ms === DAY_MS) return 'once a day at 00:00 UTC';
-  if (ms === 7 * DAY_MS) {
-    const wd = WEEKDAYS[new Date(Math.floor(Date.now() / ms) * ms).getUTCDay()];
-    return `once a week — ${wd} at 00:00 UTC`;
-  }
-  if (ms % DAY_MS === 0) return `every ${ms / DAY_MS} days at 00:00 UTC`;
-  return 'on UTC-aligned boundaries';
-}
-
-// Compact send-time tag for the dropdown option label — only for the day-and-up
-// cadences (daily/weekly/monthly), where the send time isn't obvious from the
-// label. Sub-daily cadences ("Every 3 hours") already read plainly, so no tag.
 function periodTimeTag(key) {
+  const at = nextPeriodBoundary(key);
   const p = periodInfo(key);
-  if (!p || !p.ms || p.ms < DAY_MS) return '';
-  const ms = p.ms;
-  if (ms === DAY_MS) return '00:00 UTC';
-  if (ms === 7 * DAY_MS) {
-    const wd = WEEKDAYS[new Date(Math.floor(Date.now() / ms) * ms).getUTCDay()];
-    return `${wd.slice(0, 3)} 00:00 UTC`;
-  }
-  return `every ${ms / DAY_MS} days, 00:00 UTC`;
+  if (!at || !p || !p.ms || p.ms < DAY_MS) return '';
+  const time = new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const tz = (Intl.DateTimeFormat().resolvedOptions().timeZone || '').split('/').pop().replace(/_/g, ' ');
+  return tz ? `${time} ${tz} time` : time;
 }
 
 const setEq = (a, b) => a.size === b.size && [...a].every(x => b.has(x));
@@ -1089,13 +1063,13 @@ function notifyRenderSummary() {
   // The chosen cadence, phrased for a sentence: "every 3 hours", "daily", …
   const cadence = (periodInfo(s.period) && periodInfo(s.period).label.toLowerCase()) || 'every hour';
 
-  // Spell out the exact UTC send time for the selected cadence so "Weekly" et al.
-  // aren't ambiguous about when mail actually goes out.
+  // Show the send time in the viewer's local timezone so "Weekly" et al. aren't
+  // ambiguous about when mail actually goes out.
   if (notifyPeriodNote) {
-    const when = periodSendTime(s.period);
-    notifyPeriodNote.textContent = when
-      ? `Sent ${when} — one batched digest per interval, and only when there is something to report.`
-      : 'One batched digest per interval — and only when there is something to report. Times are UTC-aligned.';
+    const tag = periodTimeTag(s.period);
+    notifyPeriodNote.textContent = tag
+      ? `Sent around ${tag}, and only when there is something to report.`
+      : 'One batched digest per interval — and only when there is something to report.';
   }
   const recipNames = (notify.cfg ? notify.cfg.recipients : [])
     .filter(r => s.recipients.has(r.id)).map(r => r.name);
