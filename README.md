@@ -138,6 +138,13 @@ is missing, so it can never look armed while being unable to send. Once armed,
 
 ### Notification behaviour worth knowing
 
+- **Identical entries are grouped, never listed twice.** Entries whose opener line
+  matches once timestamps, pids, addresses, IPs and byte counts are normalised away
+  count as one message: the email shows a single example plus `occurred N times`
+  and the first/last time it was seen. A fatal that loops 4000 times is one row,
+  not 4000. This applies to the test email too, which samples up to
+  `LD_NOTIFY_TEST_SAMPLE` (5) *distinct* messages per severity out of the newest
+  `LD_NOTIFY_SAMPLE_MAX_BLOCKS` (2000) entries it scans.
 - **Buffered entries are dropped on restart, not flushed.** Flushing on exit would
   turn a crash-restart loop into an email flood. Up to one interval of alerts can be
   lost to a restart; the logs themselves are of course untouched.
