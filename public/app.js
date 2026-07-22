@@ -712,6 +712,7 @@ const notifySaveBtn = $('notify-save');
 const notifyPreviewBtn = $('notify-preview-btn');
 const notifyTestBtn = $('notify-test-btn');
 const notifyPeriod = $('notify-period');
+const notifyPeriodNote = $('notify-period-note');
 
 // Fallback cadence used only until /notify/config arrives with the real catalog.
 const DEFAULT_PERIOD = '1h';
@@ -767,6 +768,31 @@ function nextPeriodBoundary(key) {
   if (!p || !p.ms) return null;
   const now = Date.now();
   return Math.floor(now / p.ms) * p.ms + p.ms;
+}
+
+// Human phrase for the exact wall-clock time(s) a cadence fires on. Digests flush
+// on epoch-aligned boundaries (Math.floor(t/ms)*ms), so these are fixed UTC marks,
+// never calendar dates: daily lands at 00:00 UTC, weekly on the weekday the 7-day
+// epoch grid falls on (Thursday), monthly every rolling 30 days at 00:00 UTC.
+const DAY_MS = 86400000;
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+function periodSendTime(key) {
+  const p = periodInfo(key);
+  if (!p || !p.ms) return '';
+  const ms = p.ms;
+  if (ms < DAY_MS && DAY_MS % ms === 0) {
+    const h = ms / 3600000;
+    return h === 1
+      ? 'at the top of every hour, UTC'
+      : `every ${h} hours on the UTC-aligned marks (00:00, ${h}:00, …)`;
+  }
+  if (ms === DAY_MS) return 'once a day at 00:00 UTC';
+  if (ms === 7 * DAY_MS) {
+    const wd = WEEKDAYS[new Date(Math.floor(Date.now() / ms) * ms).getUTCDay()];
+    return `once a week — ${wd} at 00:00 UTC`;
+  }
+  if (ms % DAY_MS === 0) return `every ${ms / DAY_MS} days at 00:00 UTC`;
+  return 'on UTC-aligned boundaries';
 }
 
 const setEq = (a, b) => a.size === b.size && [...a].every(x => b.has(x));
@@ -1046,6 +1072,15 @@ function notifyRenderSummary() {
   const st = notify.cfg.status || {};
   // The chosen cadence, phrased for a sentence: "every 3 hours", "daily", …
   const cadence = (periodInfo(s.period) && periodInfo(s.period).label.toLowerCase()) || 'every hour';
+
+  // Spell out the exact UTC send time for the selected cadence so "Weekly" et al.
+  // aren't ambiguous about when mail actually goes out.
+  if (notifyPeriodNote) {
+    const when = periodSendTime(s.period);
+    notifyPeriodNote.textContent = when
+      ? `Sent ${when} — one batched digest per interval, and only when there is something to report.`
+      : 'One batched digest per interval — and only when there is something to report. Times are UTC-aligned.';
+  }
   const recipNames = (notify.cfg ? notify.cfg.recipients : [])
     .filter(r => s.recipients.has(r.id)).map(r => r.name);
 
