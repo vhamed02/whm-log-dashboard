@@ -527,7 +527,7 @@ button:hover { border-color: var(--accent); }
 }
 
 /* ---------- Files section ---------- */
-.files-section { display: flex; flex-direction: column; height: 33.5rem; }
+.files-section { display: flex; flex-direction: column; height: 45.8rem; }
 .count-pill {
   margin-left: auto; flex: none;
   font-size: 11px; font-weight: 600; color: var(--muted);
