@@ -98,6 +98,24 @@ hourly).
 `info` is deliberately not subscribable: it is the catch-all bucket for
 unclassified lines and would make every digest noise.
 
+**WordPress plugin logs are never emailed.** Anything under a `wp-content/plugins`
+directory is excluded from notifications unconditionally — there is no setting and
+no way to opt back in. Plugins are the loudest and least actionable source of
+deprecations and notices on a WP box, and a digest full of them buries the errors
+worth waking up for. The exclusion applies on two axes:
+
+- **By file** — a selected log file inside a plugin directory is never watched at
+  all (no poller is attached, so it costs nothing), and is not sampled by the test
+  email. It stays selectable and fully viewable in the dashboard.
+- **By entry** — an entry in an *ordinary* log (typically `public_html/error_log`)
+  is dropped when it references a plugin path anywhere in the entry, including its
+  stack frames. This is the common case: plugin fatals almost always land in the
+  account's normal error log rather than in a plugin's own file.
+
+Only the exact `wp-content/plugins` directory matches. Themes, uploads, `mu-plugins`
+and a file merely named `plugins.log` are all unaffected. This is an **email-only**
+rule: live tail, search, and download still show every one of these logs in full.
+
 **How it sends.** A background watcher attaches to each selected file — this is
 independent of the browser, and shares the same per-file poller as the live view,
 so watching a file costs nothing extra when it is also open on screen. Matching
@@ -245,4 +263,5 @@ Note that arming notifications gives the service **outbound** network egress to 
 - **Digest latency is up to one hour**: notifications are batched, so a critical error can sit in the buffer for up to `LD_NOTIFY_INTERVAL_MS` before it is emailed. This is the deliberate trade for not flooding inboxes — a busy `error_log` can emit hundreds of lines a minute, and per-entry email would both bury the recipients and hit Brevo's rate limits. Lower the interval (minimum 1 minute) if faster alerting matters more than batching.
 - **Restarts drop buffered alerts**: up to one interval of pending notifications is lost on restart, because flushing on shutdown would make a crash-restart loop email the recipients on every restart. The log files themselves are unaffected.
 - **Dedup can over-merge**: the digest signature normalizes every digit run, so two errors differing *only* by a number (e.g. `on line 12` vs `on line 500`) collapse into one group with a count. This is nearly always the desired behaviour for log noise, but the count, not the line number, is what survives.
+- **Plugin exclusion matches the whole entry, not just its opener**: an error is treated as plugin noise when `wp-content/plugins` appears anywhere in it, stack frames included. So a core or theme fatal whose trace merely passes *through* a plugin is dropped from email too. This is the strict reading of "no plugin reports" and is the intended behaviour; those entries remain visible in the dashboard, which is the place to go when a digest looks quieter than expected.
 - **Search large-file guard**: scans newest `LD_SEARCH_MAX_BYTES_PER_FILE` bytes per file (default 256 MB) so a 5 GB file does not block the live box. Set to `0` for unlimited if the workstation allows.
