@@ -116,36 +116,11 @@ Only the exact `wp-content/plugins` directory matches. Themes, uploads, `mu-plug
 and a file merely named `plugins.log` are all unaffected. This is an **email-only**
 rule: live tail, search, and download still show every one of these logs in full.
 
-**WordPress theme problems are reported per occurrence.** Repeats are normally
-collapsed into one row carrying a count (see *How it sends* below), which is right
-for a noisy loop but wrong for a theme: a theme error that fires on three different
-requests is three things to look at, and a collapsed row hides that the second and
-third ever happened. So a `critical`, `error` or `warning` entry referencing a
-`wp-content/themes` path is exempt from grouping — **every occurrence gets its own
-row, with its own text and its own timestamp.**
-
-This matters more than it looks. Grouping rewrites every digit run to `#` before
-comparing, so `functions.php on line 214` and `on line 337` are the *same* group
-under the normal rule; expanding is what puts the real line numbers back in front
-of you. Two bounds keep an expanded digest sane:
-
-- At most **10 occurrences of one message** are listed individually. Beyond that
-  they still count towards the totals, and a note says how many were not listed.
-- An email renders at most **80 entry rows** in total. A theme group that will not
-  fit degrades to the ordinary collapsed row rather than being listed in part — a
-  half-expanded group would read as "it happened 3 times" when it happened 40.
-
-Expansion is applied *after* the email picks which messages to show, so a noisy
-theme message can never push another message out of the digest; it only spends
-rows. `info` is left grouped: it is the catch-all bucket for unclassified lines and
-expanding it would flood a digest.
-
 **How it sends.** A background watcher attaches to each selected file — this is
 independent of the browser, and shares the same per-file poller as the live view,
 so watching a file costs nothing extra when it is also open on screen. Matching
 entries are buffered and deduplicated (entries differing only by timestamp, pid,
-memory address or IP collapse into one row with a count — except theme entries,
-which are listed per occurrence), then **one grouped
+memory address or IP collapse into one row with a count), then **one grouped
 email per account per chosen interval** goes out to all its receivers in a single
 API call. Each account keeps its own cadence; a shared base tick just checks who
 is due, and every interval is UTC-boundary aligned (e.g. a 6-hour digest lands at
@@ -187,14 +162,7 @@ is missing, so it can never look armed while being unable to send. Once armed,
   and the first/last time it was seen. A fatal that loops 4000 times is one row,
   not 4000. This applies to the test email too, which samples up to
   `LD_NOTIFY_TEST_SAMPLE` (5) *distinct* messages per severity out of the newest
-  `LD_NOTIFY_SAMPLE_MAX_BLOCKS` (2000) entries it scans. **Theme entries are the
-  exception** and are listed one row per occurrence, in the digest and the test
-  email alike — see the theme rule above.
-- **Grouping is per digest, not across digests.** The buffer is cleared after every
-  send and nothing on disk remembers what was already emailed, so a message that
-  recurs after a digest goes out appears again in the next one, with its own count.
-  What stops a quiet log from being re-reported is position, not content: the
-  watcher only ever reads bytes appended after it attached.
+  `LD_NOTIFY_SAMPLE_MAX_BLOCKS` (2000) entries it scans.
 - **Buffered entries are dropped on restart, not flushed.** Flushing on exit would
   turn a crash-restart loop into an email flood. Up to one interval of alerts can be
   lost to a restart; the logs themselves are of course untouched.
@@ -294,7 +262,6 @@ Note that arming notifications gives the service **outbound** network egress to 
 - **PHP/Apache timestamp parsing**: covers the common bracketed formats; lines without a parseable leading timestamp fall back to the read time, as specified ("inferred from read time/position").
 - **Digest latency is up to one hour**: notifications are batched, so a critical error can sit in the buffer for up to `LD_NOTIFY_INTERVAL_MS` before it is emailed. This is the deliberate trade for not flooding inboxes — a busy `error_log` can emit hundreds of lines a minute, and per-entry email would both bury the recipients and hit Brevo's rate limits. Lower the interval (minimum 1 minute) if faster alerting matters more than batching.
 - **Restarts drop buffered alerts**: up to one interval of pending notifications is lost on restart, because flushing on shutdown would make a crash-restart loop email the recipients on every restart. The log files themselves are unaffected.
-- **Dedup can over-merge**: the digest signature normalizes every digit run, so two errors differing *only* by a number (e.g. `on line 12` vs `on line 500`) collapse into one group with a count. This is nearly always the desired behaviour for log noise, but the count, not the line number, is what survives. Theme entries opt out of this — they are listed per occurrence precisely so the differing line numbers survive.
-- **Theme expansion is capped, and the cap is silent about which occurrences it dropped**: past 10 occurrences of one theme message, or past 80 rows in an email, the extras are counted in the totals and summarised in a footnote but have no row of their own. The ones that survive are the earliest retained, not the worst.
+- **Dedup can over-merge**: the digest signature normalizes every digit run, so two errors differing *only* by a number (e.g. `on line 12` vs `on line 500`) collapse into one group with a count. This is nearly always the desired behaviour for log noise, but the count, not the line number, is what survives.
 - **Plugin exclusion matches the whole entry, not just its opener**: an error is treated as plugin noise when `wp-content/plugins` appears anywhere in it, stack frames included. So a core or theme fatal whose trace merely passes *through* a plugin is dropped from email too. This is the strict reading of "no plugin reports" and is the intended behaviour; those entries remain visible in the dashboard, which is the place to go when a digest looks quieter than expected.
 - **Search large-file guard**: scans newest `LD_SEARCH_MAX_BYTES_PER_FILE` bytes per file (default 256 MB) so a 5 GB file does not block the live box. Set to `0` for unlimited if the workstation allows.
