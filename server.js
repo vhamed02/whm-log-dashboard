@@ -19,6 +19,8 @@ const { LoginGuard } = require('./lib/loginguard');
 
 assertConfig();
 notifyStore.load();
+// Last-send times, used to label a theme repeat as already reported.
+require('./lib/notify-state').load();
 
 // When LD_DASHBOARD_URL is https, serve TLS natively (assertConfig already proved
 // the cert+key are readable). Otherwise plain HTTP, unchanged.
@@ -543,7 +545,7 @@ app.route({
   handler: async (req) => {
     const { account } = req.query;
     const kind = req.query.kind || 'auto';
-    const buffered = notifier.preview(account);
+    const buffered = await notifier.preview(account);
     // Prefer the real pending digest — that is what would actually go out next.
     if (kind !== 'test' && !buffered.empty) return { ...buffered, kind: 'digest' };
     // Nothing buffered yet (the common case right after setup): render the same

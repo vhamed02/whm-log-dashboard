@@ -116,6 +116,36 @@ Only the exact `wp-content/plugins` directory matches. Themes, uploads, `mu-plug
 and a file merely named `plugins.log` are all unaffected. This is an **email-only**
 rule: live tail, search, and download still show every one of these logs in full.
 
+**WordPress theme problems are reported again and again until they are fixed.**
+Every other entry is emailed exactly once, and it is worth being precise about
+why: that is a property of **position, not content**. The watcher seeds its
+offset from the file size when it attaches, so it only ever reads bytes appended
+after that, and the digest buffer is dropped after each send. Nothing anywhere
+records what was emailed, so nothing can be emailed twice.
+
+A `critical`, `error` or `warning` entry naming a `wp-content/themes` path is the
+exception. Each digest **re-reads the selected log files** and reports every theme
+entry still present in them, whether or not it has already been emailed. An
+unfixed theme fault therefore keeps arriving instead of scrolling out of one email
+and being forgotten.
+
+**Deleting the lines is what stops it.** That is the intended workflow: fix the
+theme, clear those lines out of the log, and the next digest is silent about them.
+The log file is deliberately the only source of truth for whether a problem is
+still open — there is no separate "acknowledged" state to get out of sync with
+reality.
+
+Repeats are labelled so they never read as fresh failures. An entry already
+emailed is marked **already reported · still in the log**, or **already reported ·
+N new since last email** when it has fired again, and every entry shows the time
+the *log* recorded it rather than the time the email was built. Only the last send
+time per account is stored (in `data/notify-state.json`) — never log content.
+
+`info` is excluded: it is the catch-all bucket for unclassified lines, and
+re-reporting it every cadence would bury the digest. The plugin rule still wins —
+an entry routed through plugin code is plugin noise even when a theme file appears
+in it too.
+
 **How it sends.** A background watcher attaches to each selected file — this is
 independent of the browser, and shares the same per-file poller as the live view,
 so watching a file costs nothing extra when it is also open on screen. Matching
@@ -126,7 +156,9 @@ API call. Each account keeps its own cadence; a shared base tick just checks who
 is due, and every interval is UTC-boundary aligned (e.g. a 6-hour digest lands at
 00:00/06:00/12:00/18:00). `daily`/`weekly`/`monthly` are rolling fixed intervals
 (24h / 7d / 30d), not calendar midnight / Monday / the 1st. **A quiet interval
-sends no email at all.**
+sends no email at all** — with one exception: an account whose logs still contain
+an unfixed theme problem is reported every interval until those lines are removed,
+even when nothing new has happened.
 
 Recipients come from **`LD_RECIPIENTS` in `.env`** — a comma-separated list of
 `id:Name:email` entries (e.g. `joao:Joao Rosa:joao@example.com,ops:On-call:ops@example.com`).
@@ -163,6 +195,22 @@ is missing, so it can never look armed while being unable to send. Once armed,
   not 4000. This applies to the test email too, which samples up to
   `LD_NOTIFY_TEST_SAMPLE` (5) *distinct* messages per severity out of the newest
   `LD_NOTIFY_SAMPLE_MAX_BLOCKS` (2000) entries it scans.
+- **Theme entries repeat; everything else is reported once.** Non-theme entries
+  reach the digest from the live buffer and can never reappear, because the buffer
+  is cleared on send and the watcher never re-reads old bytes. Theme entries come
+  from a re-read of the files themselves each cadence, so they persist until the
+  lines are deleted. When both hold the same message it is counted once, and the
+  copy with more occurrences wins — so a log rotated away mid-interval still
+  reports everything that actually happened.
+- **The theme re-check is bounded.** It reads at most
+  `LD_NOTIFY_THEME_SCAN_MAX_BYTES_PER_FILE` (4 MB) per file,
+  `LD_NOTIFY_THEME_SCAN_MAX_BYTES_TOTAL` (32 MB) overall and
+  `LD_NOTIFY_THEME_SCAN_MAX_BLOCKS` (5000) entries per account per cadence,
+  newest first. If it stops early the email says so. A failed re-check never costs
+  an account its digest — whatever the buffer holds is still sent.
+- **Every active account is scheduled, not just busy ones.** A quiet account is
+  precisely the one that needs the theme re-check, so the schedule is created when
+  settings are saved rather than by the first entry to arrive.
 - **Buffered entries are dropped on restart, not flushed.** Flushing on exit would
   turn a crash-restart loop into an email flood. Up to one interval of alerts can be
   lost to a restart; the logs themselves are of course untouched.
@@ -190,6 +238,7 @@ cp .env.example .env
 # Email notifications stay DISARMED (LD_NOTIFY_ENABLED=0) until you opt in.
 mkdir -p data && chmod 700 data   # per-account notification settings live here
 npm run check           # syntax sanity
+npm test                # notifier behaviour suite (node:test, no deps)
 npm start               # test once manually, Ctrl-C once verified
 
 cp log-dashboard.service /etc/systemd/system/log-dashboard.service
@@ -264,4 +313,7 @@ Note that arming notifications gives the service **outbound** network egress to 
 - **Restarts drop buffered alerts**: up to one interval of pending notifications is lost on restart, because flushing on shutdown would make a crash-restart loop email the recipients on every restart. The log files themselves are unaffected.
 - **Dedup can over-merge**: the digest signature normalizes every digit run, so two errors differing *only* by a number (e.g. `on line 12` vs `on line 500`) collapse into one group with a count. This is nearly always the desired behaviour for log noise, but the count, not the line number, is what survives.
 - **Plugin exclusion matches the whole entry, not just its opener**: an error is treated as plugin noise when `wp-content/plugins` appears anywhere in it, stack frames included. So a core or theme fatal whose trace merely passes *through* a plugin is dropped from email too. This is the strict reading of "no plugin reports" and is the intended behaviour; those entries remain visible in the dashboard, which is the place to go when a digest looks quieter than expected.
+- **An unfixed theme fault emails every interval, indefinitely**: this is the requested behaviour, but on an hourly account a theme error left in the log for a week is 168 emails saying the same thing. The label makes each one obviously a repeat, and deleting the lines stops it immediately; shortening that loop means fixing the fault or clearing the log, not muting the digest.
+- **The theme re-check re-reads files on every cadence**: this is real recurring I/O that did not exist before, bounded by the `LD_NOTIFY_THEME_SCAN_*` budgets above. On an account whose selected logs are larger than the byte budget, only the newest slice is re-checked, so a theme error older than that slice stops being re-reported even though its lines are still on disk.
+- **"Already reported" depends on the last send time surviving**: it lives in `data/notify-state.json`. If that file is lost, the next digest labels nothing as a repeat and everything reads as new for one cycle. Nothing is lost or duplicated — only the labelling degrades.
 - **Search large-file guard**: scans newest `LD_SEARCH_MAX_BYTES_PER_FILE` bytes per file (default 256 MB) so a 5 GB file does not block the live box. Set to `0` for unlimited if the workstation allows.
