@@ -222,6 +222,7 @@ cp .env.example .env
 # Email notifications stay DISARMED (LD_NOTIFY_ENABLED=0) until you opt in.
 mkdir -p data && chmod 700 data   # per-account notification settings live here
 npm run check           # syntax sanity
+npm test                # theme-expansion / grouping suite (node:test, no deps)
 npm start               # test once manually, Ctrl-C once verified
 
 cp log-dashboard.service /etc/systemd/system/log-dashboard.service
